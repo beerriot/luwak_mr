@@ -1,0 +1,37 @@
+Utilities for map/reducing Luwak data
+
+* Description
+
+The main purpose of this application is to expose a function that
+conforms to Riak's dynamic map/reduce inputs interface, allowing a
+user to compute a map/reduce query over a Luwak file (see
+src/luwak_mr.erl).  An example use is also included for reference
+(src/luwak_mr_words.erl).
+
+* Setup
+
+To use it, build the project.  First edit rebar.config such that the
+include path in the erl_opts line points to the "luwak-*/include"
+directory in your Riak installation (the home of luwak.hrl).
+Then run:
+: rebar compile
+
+Add the path to the beams to each of your Riak nodes by either adding
+an 'add_paths' setting to the riak_kv section of your app.config
+before starting the nodes, or by using code:add_path from each node's
+console.
+
+* Use
+
+You can map/reduce across any Luwak file using the Erlang client:
+: C:mapred({modfun, luwak_mr, file, <<"my_file_name">>},
+:          [... your query ...]).
+Or HTTP:
+: {"inputs":{"module":"luwak_mr",
+:            "function":"file",
+:            "arg":"my_file_name"},
+:  "query":[... your query ...]}
+
+If you start your query with a map phase, your map function will be
+evaluated for each luwak_block object in the file.  The KeyData
+argument to the function will be the block's offset in the file.
