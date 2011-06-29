@@ -59,14 +59,14 @@
 
 -include("luwak.hrl").
 
-%% @spec file(pid(), binary(), integer()) -> ok
+%% @spec file(term(), binary(), integer()) -> ok
 %% @doc Sends the bucket-keys for the blocks of a Luwak file as
 %%      map/reduce inputs to the specified FlowPid.  Use it by
 %%      specifying the map/reduce input as:
 %%```
 %%      {modfun, luwak_mr, file, <<"file_name">>}
 %%'''
-file(FlowPid, Filename, _Timeout) when is_binary(Filename) ->
+file(MR, Filename, _Timeout) when is_binary(Filename) ->
     {ok, Client} = riak:local_client(),
 
     {ok, File} = luwak_file:get(Client, Filename),
@@ -74,13 +74,18 @@ file(FlowPid, Filename, _Timeout) when is_binary(Filename) ->
     {block_size, BlockSize} = lists:keyfind(block_size, 1, V),
 
     case lists:keyfind(root, 1, V) of
-        {root, RootKey} -> tree(FlowPid, Client, BlockSize, RootKey, 0);
+        {root, RootKey} -> tree(MR, Client, BlockSize, RootKey, 0);
         false           -> ok
     end,
 
-    luke_flow:finish_inputs(FlowPid).
+    case riak_kv_util:mapred_system() of
+        pipe ->
+            riak_pipe:eoi(MR);
+        legacy ->
+            luke_flow:finish_inputs(MR)
+    end.
 
-%% @spec tree(pid(), riak_client(), integer(), binary(), integer())
+%% @spec tree(term(), riak_client(), integer(), binary(), integer())
 %%          -> integer()
 %% @doc Recursive tree walker used by file/3.  This function assumes
 %%      that a child link in a tree is a data block if the size it
@@ -90,15 +95,21 @@ file(FlowPid, Filename, _Timeout) when is_binary(Filename) ->
 %%      The result is the offset of the byte that would imediately
 %%      follow all of the bytes in this tree.  This fact is unused,
 %%      but *could* be used for testing an invariant.
-tree(FlowPid, Client, BlockSize, Key, Offset) ->
+tree(MR, Client, BlockSize, Key, Offset) ->
     {ok, #n{children=Children}} = luwak_tree:get(Client, Key),
     lists:foldl(
       fun({SubTree, Size}, SubOffset) when Size > BlockSize ->
-              tree(FlowPid, Client, BlockSize, SubTree, SubOffset),
+              tree(MR, Client, BlockSize, SubTree, SubOffset),
               SubOffset+Size;
          ({Leaf, Size}, LeafOffset) ->
-              luke_flow:add_inputs(
-                FlowPid, [{{?N_BUCKET, Leaf}, LeafOffset}]),
+              case riak_kv_util:mapred_system() of
+                  pipe ->
+                      riak_pipe:queue_work(
+                        MR, {{?N_BUCKET, Leaf}, LeafOffset});
+                  legacy ->
+                      luke_flow:add_inputs(
+                        MR, [{{?N_BUCKET, Leaf}, LeafOffset}])
+              end,
               LeafOffset+Size
       end,
       Offset,

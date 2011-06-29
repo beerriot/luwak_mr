@@ -66,10 +66,16 @@
 %%      spaces).
 in_file(Filename) ->
     {ok, C} = riak:local_client(),
+    Inputs = {modfun, luwak_mr, file, Filename},
+    Spec = [{map, {modfun, ?MODULE, map}, none, false},
+            {reduce, {modfun, ?MODULE, reduce}, none, true}],
     {ok, [{_Start, _End, R}]} =
-        C:mapred({modfun, luwak_mr, file, Filename},
-                 [{map, {modfun, ?MODULE, map}, none, false},
-                  {reduce, {modfun, ?MODULE, reduce}, none, true}]),
+        case riak_kv_util:mapred_system() of
+            pipe ->
+                riak_kv_mrc_pipe:mapred(Inputs, Spec);
+            legacy ->
+                C:mapred(Inputs, Spec)
+        end,
     strip_record(R).
 
 %% @spec strip_record(chunk()|segment()) -> [binary()]
